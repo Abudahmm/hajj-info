@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة التحكم ومعلومات الحجاج - سلامة الحجاج</title>
+    <!-- Libraries (Mapbox, Turf, Seedrandom) -->
+    <script src='https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.js'></script>
+    <link href='https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css' rel='stylesheet' />
+    <script src='https://unpkg.com/@turf/turf@6/turf.min.js'></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/3.0.5/seedrandom.min.js"></script>
+
+    <style>
+        /* --- Basic Styles --- */
+        :root {
+            --panel-max-height: 35%; /* Control panel height easily */
+        }
+        body {
+            margin: 0; padding: 0; font-family: 'Tahoma', 'Helvetica Neue', Arial, sans-serif;
+            overflow: hidden; display: flex; flex-direction: column;
+            height: 100vh; background-color: #f8f9fa;
+        }
+        .logos-container {
+            background-color: #ffffff; padding: 10px 0; display: flex;
+            justify-content: center; align-items: center; border-bottom: 2px solid #dee2e6;
+            gap: 40px; box-sizing: border-box; flex-shrink: 0;
+        }
+        .logos-container img { height: 50px; max-width: 150px; object-fit: contain; }
+        .main-container { display: flex; flex-grow: 1; width: 100%; overflow: hidden; }
+
+        /* --- Sidebar --- */
+        #sidebar {
+            width: 300px; background-color: #f4f4f4; padding: 15px; box-sizing: border-box;
+            overflow-y: auto; height: 100%; border-left: 1px solid #ccc; flex-shrink: 0;
+        }
+        #sidebar h2 { margin: 0 0 15px 0; font-size: 1.4em; color: #333; text-align: center; border-bottom: 1px solid #ddd; padding-bottom: 10px; }
+        #pilgrim-list { list-style: none; padding: 0; margin: 0; }
+        #pilgrim-list li { display: flex; align-items: center; padding: 10px 10px 10px 5px; margin-bottom: 8px; cursor: pointer; border-radius: 5px; transition: background-color 0.2s ease; background-color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-right: 5px solid #ccc; border-left: none; }
+        #pilgrim-list li:hover { background-color: #e9e9e9; }
+        #pilgrim-list li.selected { background-color: #d0eaff; font-weight: bold; border-right-color: #0056b3; }
+        #pilgrim-list li.zone-green { border-right-color: #2ecc71; }
+        #pilgrim-list li.zone-orange { border-right-color: #e67e22; }
+        #pilgrim-list li.zone-red { border-right-color: #e74c3c; }
+        #pilgrim-list img { width: 40px; height: 40px; border-radius: 50%; margin-left: 12px; margin-right: 0; object-fit: cover; border: 1px solid #ddd; flex-shrink: 0; background-color: #eee; }
+        #pilgrim-list span { font-size: 0.95em; color: #555; flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+        #pilgrim-list li.selected span { color: #0056b3; }
+
+        /* --- Map Container --- */
+        #map-container { flex-grow: 1; position: relative; height: 100%; }
+        #map { position: absolute; top: 0; bottom: 0; right: 0; left: 0; width: 100%; height: 100%; }
+
+        /* --- Info Panel (Detailed View) --- */
+        #info-panel {
+            position: absolute; bottom: 0; left: 0; right: 0; width: 100%;
+            max-height: var(--panel-max-height); /* Use CSS variable */
+            background-color: rgba(255, 255, 255, 0.97); padding: 15px 20px; /* Reduced padding */
+            box-sizing: border-box; border-top: 2px solid #0056b3;
+            overflow-y: auto; display: none;
+            box-shadow: 0 -3px 8px rgba(0,0,0,0.15);
+            font-size: 0.9em; line-height: 1.6; text-align: right;
+            transition: max-height 0.3s ease-in-out; /* Smooth transition for height changes */
+        }
+        #info-panel.visible { display: block; }
+        #info-panel.expanded { /* Class to potentially increase height if needed */
+             max-height: 60%; /* Example expanded height */
+        }
+
+        #info-panel-content { display: flex; align-items: flex-start; gap: 20px; }
+        #info-panel-img-container { flex-shrink: 0; text-align: center; }
+        #info-panel-img { width: 90px; height: 90px; border-radius: 50%; object-fit: cover; border: 3px solid #eee; background-color: #ccc; display: block; margin: 0 auto 8px auto; }
+        #info-panel-name { font-size: 1.3em; font-weight: bold; color: #333; margin-bottom: 10px; display: block; }
+
+        #info-panel-all-details { flex-grow: 1; } /* Container for both basic and additional */
+        #info-panel-basic-details, #info-panel-additional-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); /* Slightly smaller min width */
+            gap: 8px 18px; /* Reduced gap */
+        }
+        #info-panel-additional-details {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px dashed #ccc; /* Separator */
+        }
+        #info-panel-details p, #info-panel-basic-details p, #info-panel-additional-details p {
+             margin: 1px 0; color: #444; font-size: 0.92em;
+             border-bottom: 1px dotted #eee; padding-bottom: 3px;
+        }
+        #info-panel-details strong, #info-panel-basic-details strong, #info-panel-additional-details strong {
+             display: inline-block; color: #0056b3; margin-left: 6px; min-width: 80px;
+        }
+        /* Link style for location */
+        .location-link { color: #0066cc; text-decoration: none; }
+        .location-link:hover { text-decoration: underline; }
+
+        /* Buttons common style */
+        .info-panel-button {
+            padding: 8px 18px; background-color: #5a6268; color: white; border: none;
+            border-radius: 4px; cursor: pointer; font-size: 0.9em; font-weight: bold;
+            transition: background-color 0.2s ease; margin: 5px; display: inline-block;
+        }
+        .info-panel-button:hover { background-color: #495057; }
+
+        #toggle-info-button-container { text-align: center; margin-top: 15px; }
+        #emergency-button { background-color: #e74c3c; }
+        #emergency-button:hover { background-color: #c0392b; }
+        #emergency-button:active { background-color: #a52d20; }
+
+        /* Zone Labels */
+        .zone-label { padding: 2px 6px; border-radius: 3px; color: white; font-size: 0.85em; margin-right: 5px; margin-left: 0; display: inline-block; }
+        .zone-label-green { background-color: #2ecc71; }
+        .zone-label-orange { background-color: #e67e22; }
+        .zone-label-red { background-color: #e74c3c; }
+        .zone-label-unknown { background-color: #95a5a6; }
+
+        /* --- Markers --- */
+        .pilgrim-marker { width: 22px; height: 22px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, 0.4); display: flex; justify-content: center; align-items: center; font-size: 16px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.3); background-color: #fff; }
+        .marker-zone-green { background-color: #2ecc71; }
+        .marker-zone-orange { background-color: #e67e22; }
+        .marker-zone-red { background-color: #e74c3c; }
+        .marker-zone-unknown { background-color: #bdc3c7; }
+        .pilgrim-marker span { line-height: 1; display: inline-block; }
+        .marker-emergency span { font-size: 1.4em; animation: blink-fade 1.2s infinite ease-in-out; }
+        @keyframes blink-fade { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.9); } }
+
+        .crowd-warning-marker {
+            width: 35px; height: 35px; border-radius: 50%;
+            background-color: rgba(255, 140, 0, 0.9); /* Darker orange */
+            border: 2px solid #cc7a00;
+            display: flex; justify-content: center; align-items: center;
+            font-size: 24px; color: white; cursor: help; box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+            z-index: 100 !important; /* Ensure it's on top */
+            animation: pulse 1.8s infinite ease-in-out; /* Added pulse animation */
+        }
+         @keyframes pulse {
+             0% { transform: scale(1); box-shadow: 0 2px 5px rgba(0,0,0,0.4); }
+             50% { transform: scale(1.1); box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+             100% { transform: scale(1); box-shadow: 0 2px 5px rgba(0,0,0,0.4); }
+         }
+        .crowd-warning-marker span { line-height: 1; }
+        .mapboxgl-popup { max-width: 200px; font: 12px/20px 'Tahoma', Arial, Helvetica, sans-serif; }
+        .mapboxgl-popup-content { padding: 10px; text-align: center; }
+
+        /* --- Custom Alert Modal --- */
+        #custom-alert-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(0, 0, 0, 0.6);
+            display: none; /* Hidden by default */
+            justify-content: center; align-items: center;
+            z-index: 1000; /* Above everything else */
+        }
+        #custom-alert-box {
+            background-color: #fff;
+            padding: 30px 40px;
+            border-radius: 8px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+            text-align: center;
+            max-width: 80%;
+            width: 400px; /* Adjust width */
+        }
+        #custom-alert-message {
+            font-size: 1.4em; /* Larger text */
+            color: #333;
+            margin-bottom: 25px;
+            line-height: 1.5;
+        }
+        #custom-alert-close-button {
+             padding: 10px 25px; background-color: #007bff; color: white;
+             border: none; border-radius: 5px; cursor: pointer;
+             font-size: 1em; font-weight: bold; transition: background-color 0.2s ease;
+        }
+        #custom-alert-close-button:hover { background-color: #0056b3; }
+
+        /* --- Mobile Responsiveness --- */
+        @media (max-width: 768px) {
+            #sidebar { width: 250px; } /* Slightly smaller sidebar */
+            .logos-container img { height: 40px; }
+        }
+        @media (max-width: 600px) {
+            .main-container { flex-direction: column-reverse; } /* Stack map above sidebar */
+            #sidebar { width: 100%; height: 40%; /* Sidebar takes portion of height */ border-left: none; border-top: 1px solid #ccc; }
+            #map-container { height: 60%; } /* Map takes remaining height */
+             /* Adjust info panel layout for stacking */
+            #info-panel-content { flex-direction: column; align-items: center; }
+            #info-panel-img-container { margin-bottom: 15px; }
+            #info-panel-name { font-size: 1.2em; }
+            #info-panel-all-details { width: 100%; } /* Ensure details take full width */
+            #info-panel-basic-details, #info-panel-additional-details { grid-template-columns: 1fr; /* Single column grid */ gap: 5px 10px; }
+            #info-panel { max-height: 50%; } /* Allow slightly more height on mobile */
+            :root { --panel-max-height: 50%; } /* Update variable for mobile */
+            .logos-container { gap: 20px; }
+            .logos-container img { height: 35px; }
+        }
+
+    </style>
+</head>
+<body>
+    <!-- Logos Section -->
+    <div class="logos-container">
+         <img src="https://cdn.discordapp.com/attachments/860307816837546024/1358016916106776757/hajj-icon.png?ex=67f643cf&is=67f4f24f&hm=e67334eb1046c4c0d33879b59fa25de3e1e4c460d6be52c1be06d58a3332e31d&" alt="شعار الحج والعمرة">
+         <img src="https://cdn.discordapp.com/attachments/860307816837546024/1358016924058910821/kfsc.jpg?ex=67f643d1&is=67f4f251&hm=fe6c695a3af856e20299dbde56e54070dba47d28815f4caceca6a6e5b996c104&" alt="شعار مركز الملك سلمان">
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="main-container">
+         <div id="map-container">
+            <div id="map"></div>
+            <div id="info-panel"> <!-- Content injected by updateInfoPanel() --> </div>
+        </div>
+        <div id="sidebar">
+            <h2>قائمة الحجاج</h2>
+            <ul id="pilgrim-list"></ul>
+        </div>
+    </div>
+
+     <!-- Custom Alert Modal Structure -->
+    <div id="custom-alert-overlay">
+        <div id="custom-alert-box">
+            <p id="custom-alert-message">الرسالة هنا</p>
+            <button id="custom-alert-close-button">إغلاق</button>
+        </div>
+    </div>
+
+
+    <script>
+        // --- Config & Constants ---
+        const MAPBOX_ACCESS_TOKEN = 'pk.eyJ1IjoiZW5pZ21hOTExIiwiYSI6ImNtOTRkaTJweDBqNW0yaXNjd2V5MTg5emQifQ.XWHxMLIwutJJQt2gYWtIdA'; // Replace
+        const NUM_RANDOM_PILGRIMS = 29; const MAP_INITIAL_ZOOM = 12; const MAP_FLY_TO_ZOOM = 15; const MAP_PITCH = 45; const MAP_BEARING = -20;
+        const MAKKAH_CENTER_COORDS = [39.826168, 21.4225]; const MINA_COORDS = [39.893, 21.414]; const ARAFAT_COORDS = [39.984, 21.355]; const MUZDALIFAH_COORDS = [39.915, 21.387];
+        const RED_ZONE_RADIUS_KM = 1.5; const ORANGE_ZONE_THRESHOLD_KM = 4.0; const MAKKAH_VISUAL_EXTENT_KM = 18.0;
+        const EMERGENCY_EMOJI = '🚨'; const CROWD_WARNING_EMOJI = '⚠️'; const CLUSTER_CENTER_COORDS = [39.826, 21.422]; const CLUSTER_RADIUS_KM = 0.05; const NUM_CLUSTER_PILGRIMS = 5;
+        const placeholderSvg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSI4MCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSIjY2NjIj48cGF0aCBkPSJNMTIgMmMtNS41MiAwLTEwIDQuNDgtMTAgMTBzNC40OCAxMCAxMCAxMCAxMC00LjQ4IDEwLTEwUzE3LjUyIDIgMTIgMnptMCAzYzEuNjYgMCAzIDEuMzQgMyAzcy0xLjM0IDMtMyAzLTMtMS4zNC0zLTMgMS4zNC0zIDMtM3ptMCAxNC4yYy0yLjUgMC00LjcxLTEuMjgtNi4yMi0zLjIzLjAyLS45OCAyLjQ4LTEuOTMgNi4yMi0xLjkzczYuMiAxLjA0IDYuMjIgMS45M2MtMS41MSAyLjA0LTMuNzIgMy4yMy02LjIyIDMuMjN6Ii8+PC9zdmc+';
+
+        // --- Helper Functions ---
+        const rng = new Math.seedrandom('MakkahSafetySingleFileV2_Mobile'); // New seed
+        function getRandomFloat(min, max) { return rng() * (max - min) + min; } function getRandomInt(min, max) { return Math.floor(rng() * (max - min + 1)) + min; } function getRandomElement(arr) { return arr[Math.floor(rng() * arr.length)]; } function getRandomDate(start, end) { return new Date(start.getTime() + rng() * (end.getTime() - start.getTime())); } function formatDate(date) { return date.toLocaleDateString('ar-SA', { year: 'numeric', month: 'numeric', day: 'numeric' }); } function generateRandomId(length) { let result = ''; const chars = '0123456789'; for (let i = 0; i < length; i++) result += chars.charAt(Math.floor(rng() * chars.length)); return result; } function generateRandomPassport() { const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'; let result = ''; for (let i = 0; i < 2; i++) result += letters.charAt(Math.floor(rng() * letters.length)); result += generateRandomId(7); return result; } function haversineDistance(coords1, coords2) { if(!coords1 || !coords2) return Infinity; const R = 6371; const dLat = (coords2[1]-coords1[1])*Math.PI/180; const dLon = (coords2[0]-coords1[0])*Math.PI/180; const lat1 = coords1[1]*Math.PI/180; const lat2 = coords2[1]*Math.PI/180; const a = Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)*Math.sin(dLon/2); const c = 2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)); return R*c; } function getPilgrimZone(pilgrimCoords) { if(!pilgrimCoords || !Array.isArray(pilgrimCoords) || pilgrimCoords.length !== 2) return 'غير معروف'; const distToMina = haversineDistance(pilgrimCoords, MINA_COORDS); const distToArafat = haversineDistance(pilgrimCoords, ARAFAT_COORDS); const distToMuzdalifah = haversineDistance(pilgrimCoords, MUZDALIFAH_COORDS); if (distToMina <= RED_ZONE_RADIUS_KM || distToArafat <= RED_ZONE_RADIUS_KM || distToMuzdalifah <= RED_ZONE_RADIUS_KM) return 'حمراء'; const distToHaram = haversineDistance(pilgrimCoords, MAKKAH_CENTER_COORDS); if (distToHaram <= ORANGE_ZONE_THRESHOLD_KM) return 'خضراء'; else if (distToHaram <= MAKKAH_VISUAL_EXTENT_KM * 1.5) return 'برتقالية'; else return 'غير معروف'; } function imgError(image) { image.onerror = ""; image.src = placeholderSvg; return true; }
+        function generateCoordsForZoneDistribution() { const rand = rng(); let center; let minRadiusKm, maxRadiusKm; if (rand < 0.60) { center = MAKKAH_CENTER_COORDS; minRadiusKm = RED_ZONE_RADIUS_KM * 1.1; maxRadiusKm = ORANGE_ZONE_THRESHOLD_KM; minRadiusKm = Math.min(minRadiusKm, maxRadiusKm * 0.9); } else if (rand < 0.85) { center = MAKKAH_CENTER_COORDS; minRadiusKm = ORANGE_ZONE_THRESHOLD_KM; maxRadiusKm = MAKKAH_VISUAL_EXTENT_KM * 0.8; } else { center = getRandomElement([MINA_COORDS, ARAFAT_COORDS, MUZDALIFAH_COORDS]); minRadiusKm = 0; maxRadiusKm = RED_ZONE_RADIUS_KM * 1.2; } const distanceKm = getRandomFloat(minRadiusKm, maxRadiusKm); const bearingDeg = getRandomFloat(0, 360); try { const point = turf.destination(center, distanceKm, bearingDeg, { units: 'kilometers' }); return point.geometry.coordinates; } catch (e) { console.error("Error generating point with turf.destination:", e); const latOffset = (distanceKm / 111.32) * Math.cos(bearingDeg * Math.PI / 180); const lonOffset = (distanceKm / (111.32 * Math.cos(center[1] * Math.PI / 180))) * Math.sin(bearingDeg * Math.PI / 180); return [center[0] + lonOffset, center[1] + latOffset]; } }
+
+        // --- Data Generation ---
+        const pilgrims = []; const aseelCoords = [46.851389, 24.784299]; const aseelPilgrim = { id: 'P0001', name: 'أسيل الغامدي', photoUrl: placeholderSvg, age: 20, gender: 'ذكر', nationality: 'سعودي', medicalHistory: 'لا يوجد', hotelName: 'غير معروف', coordinates: aseelCoords, zone: getPilgrimZone(aseelCoords), isEmergency: false, passportNumber: 'SA' + generateRandomId(7), nationalId: '1' + generateRandomId(9), passportExpiry: formatDate(getRandomDate(new Date(2025, 0, 1), new Date(2030, 11, 31))), permitStatus: 'مصرح', permitNumber: 'H' + generateRandomId(8), campaignName: 'حملة الراجحي الخيرية', phoneNumber: '05' + generateRandomId(8), emergencyPhoneNumber: '05' + generateRandomId(8), criminalRecord: 'لا يوجد', arrivalPoint: 'مطار الملك عبدالعزيز الدولي', arrivalDate: formatDate(getRandomDate(new Date(2024, 5, 1), new Date(2024, 5, 10))), departureDate: formatDate(getRandomDate(new Date(2024, 5, 25), new Date(2024, 6, 5))) }; pilgrims.unshift(aseelPilgrim);
+        const firstNamesAr = ["فاطمة", "محمد", "عائشة", "علي", "خديجة", "عمر", "زينب", "حسن", "آمنة", "إبراهيم", "مريم", "يوسف", "صالح", "أحمد", "ليلى", "خالد", "نورة", "سعد", "سارة", "عبدالله"]; const lastNamesAr = ["الغامدي", "الزهراني", "القحطاني", "العتيبي", "المالكي", "الشهري", "الحربي", "المطيري", "العنزي", "الشمري", "اليامي", "السبيعي", "الدوسري", "الأحمدي", "الجهني"]; const nationalitiesAr = ["سعودي", "مصري", "باكستاني", "إندونيسي", "نيجيري", "تركي", "هندي", "بنغلاديشي", "ماليزي", "إيراني", "جزائري", "مغربي", "بريطاني", "فرنسي", "أمريكي", "أردني", "سوري", "عراقي"]; const gendersAr = ["أنثى", "ذكر"]; const medicalNotesAr = ["لا يوجد", "ربو", "سكري النوع الثاني", "ارتفاع ضغط الدم", "حساسية: بنسلين", "مشاكل قلبية بسيطة", "عملية جراحية سابقة بالركبة", "يحتاج كرسي متحرك", "حساسية: مكسرات", "حساسية غبار"]; const hotelsAr = ["برج ساعة مكة الملكي فيرمونت", "قصر مكة رافلز", "بولمان زمزم مكة", "سويس أوتيل مكة", "دار التوحيد إنتركونتيننتال", "المروة ريحان من روتانا", "هيلتون مكة للمؤتمرات", "كونراد مكة", "جبل عمر حياة ريجنسي مكة", "شقق فندقية - منطقة س", "سكن خاص - العزيزية", "مخيم مؤقت - منى"]; const campaignsAr = ["حملة الراجحي", "حملة الفرقان", "حملة النور", "حملة الإحسان", "حملة ضيوف الرحمن", "حملة الفوزان", "حملة محلية", "بدون حملة"]; const arrivalPointsAr = ["مطار الملك عبدالعزيز الدولي", "مطار الأمير محمد بن عبدالعزيز الدولي", "ميناء جدة الإسلامي", "منفذ بري"]; const permitStatusesAr = ["مصرح", "غير مصرح", "قيد المراجعة"]; const criminalRecordsAr = ["لا يوجد", "لا يوجد", "لا يوجد", "قيد التحقق"];
+        for (let i = 0; i < NUM_RANDOM_PILGRIMS; i++) { const gender = getRandomElement(gendersAr); const firstName = getRandomElement(firstNamesAr); const lastName = getRandomElement(lastNamesAr); let pilgrimCoords; if (i >= NUM_RANDOM_PILGRIMS - NUM_CLUSTER_PILGRIMS) { const clusterDistKm = getRandomFloat(0, CLUSTER_RADIUS_KM); const clusterBearing = getRandomFloat(0, 360); try { const point = turf.destination(CLUSTER_CENTER_COORDS, clusterDistKm, clusterBearing, { units: 'kilometers' }); pilgrimCoords = point.geometry.coordinates; } catch (e) { pilgrimCoords = [ CLUSTER_CENTER_COORDS[0] + (clusterDistKm / 111.32) * Math.sin(clusterBearing * Math.PI / 180), CLUSTER_CENTER_COORDS[1] + (clusterDistKm / 111.32) * Math.cos(clusterBearing * Math.PI / 180) ]; } } else { pilgrimCoords = generateCoordsForZoneDistribution(); } const zone = getPilgrimZone(pilgrimCoords); const permitStatus = getRandomElement(permitStatusesAr); const nationality = getRandomElement(nationalitiesAr); pilgrims.push({ id: `P${1002 + i}`, name: `${firstName} ${lastName}`, photoUrl: `https://i.pravatar.cc/80?img=${i+1}`, age: getRandomInt(18, 80), gender: gender, nationality: nationality, medicalHistory: getRandomElement(medicalNotesAr), hotelName: getRandomElement(hotelsAr), coordinates: pilgrimCoords, zone: zone, isEmergency: false, passportNumber: generateRandomPassport(), nationalId: (nationality === 'سعودي' ? '1' : '2') + generateRandomId(9), passportExpiry: formatDate(getRandomDate(new Date(2024, 8, 1), new Date(2032, 11, 31))), permitStatus: permitStatus, permitNumber: permitStatus === 'مصرح' ? 'H' + generateRandomId(8) : '---', campaignName: getRandomElement(campaignsAr), phoneNumber: '05' + generateRandomId(8), emergencyPhoneNumber: '05' + generateRandomId(8), criminalRecord: getRandomElement(criminalRecordsAr), arrivalPoint: getRandomElement(arrivalPointsAr), arrivalDate: formatDate(getRandomDate(new Date(2024, 5, 1), new Date(2024, 5, 12))), departureDate: formatDate(getRandomDate(new Date(2024, 5, 20), new Date(2024, 6, 10))) }); }
+        console.log(`Total pilgrims generated: ${pilgrims.length}`);
+
+        // --- DOM Elements & Map Init ---
+        const pilgrimListElement = document.getElementById('pilgrim-list');
+        const infoPanelElement = document.getElementById('info-panel');
+        const mapContainer = document.getElementById('map-container');
+        const customAlertOverlay = document.getElementById('custom-alert-overlay');
+        const customAlertMessage = document.getElementById('custom-alert-message');
+        const customAlertCloseButton = document.getElementById('custom-alert-close-button');
+        mapboxgl.accessToken = MAPBOX_ACCESS_TOKEN;
+        const map = new mapboxgl.Map({ container: 'map', style: 'mapbox://styles/mapbox/satellite-streets-v12', center: MAKKAH_CENTER_COORDS, zoom: MAP_INITIAL_ZOOM, pitch: MAP_PITCH, bearing: MAP_BEARING, antialias: true });
+        map.addControl(new mapboxgl.NavigationControl()); map.addControl(new mapboxgl.FullscreenControl());
+        const arabicLabelLayers = ['country-label','state-label','settlement-label','natural-point-label','water-point-label','water-line-label','airport-label','road-label', 'poi-label'];
+        map.on('style.load', () => { arabicLabelLayers.forEach(layerId => { try { if(map.getLayer(layerId)) map.setLayoutProperty(layerId, 'text-field', ['get', 'name_ar']); } catch (e) { /* ignore */ } }); });
+        let markers = {};
+
+        // --- Map Load Event ---
+        map.on('load', () => {
+            console.log("Map loaded.");
+            map.addSource('mapbox-dem', { type: 'raster-dem', url: 'mapbox://mapbox.mapbox-terrain-dem-v1', tileSize: 512, maxzoom: 16 }); map.setTerrain({ 'source': 'mapbox-dem', 'exaggeration': 1.5 }); map.addLayer({ id: 'sky', type: 'sky', paint: { 'sky-type': 'atmosphere', 'sky-atmosphere-sun': [0.0, 0.0], 'sky-atmosphere-sun-intensity': 15 } }); map.addSource('zone-polygons-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } }); map.addLayer({ id: 'zone-makkah-extent-fill', type: 'fill', source: 'zone-polygons-source', filter: ['==', 'zoneType', 'makkah_extent'], paint: {'fill-color': '#e67e22', 'fill-opacity': 0.15 } }); map.addLayer({ id: 'zone-green-fill', type: 'fill', source: 'zone-polygons-source', filter: ['==', 'zoneType', 'green'], paint: { 'fill-color': '#2ecc71', 'fill-opacity': 0.25 } }); map.addLayer({ id: 'zone-red-fill', type: 'fill', source: 'zone-polygons-source', filter: ['==', 'zoneType', 'red'], paint: { 'fill-color': '#e74c3c', 'fill-opacity': 0.35 } }); map.addLayer({ id: 'zone-makkah-extent-outline', type: 'line', source: 'zone-polygons-source', filter: ['==', 'zoneType', 'makkah_extent'], paint: { 'line-color': '#d35400', 'line-width': 1, 'line-opacity': 0.4, 'line-dasharray': [2, 2] } }); map.addLayer({ id: 'zone-green-outline', type: 'line', source: 'zone-polygons-source', filter: ['==', 'zoneType', 'green'], paint: { 'line-color': '#27ae60', 'line-width': 1.5, 'line-opacity': 0.7 } }); map.addLayer({ id: 'zone-red-outline', type: 'line', source: 'zone-polygons-source', filter: ['==', 'zoneType', 'red'], paint: { 'line-color': '#c0392b', 'line-width': 1.5, 'line-opacity': 0.8 } });
+            populateSidebarAndMarkers(); addCrowdWarningMarker(); drawPilgrimZones();
+        });
+        map.on('error', (e) => { console.error("Mapbox error:", e); });
+
+        // --- Core Functions ---
+        function populateSidebarAndMarkers() { /* ... (Function remains the same as previous working version) ... */
+            if (!pilgrimListElement) { console.error("Sidebar UL element (#pilgrim-list) not found!"); return; }
+            pilgrimListElement.innerHTML = '';
+            Object.values(markers).forEach(marker => marker.remove());
+            markers = {};
+            if (!pilgrims || pilgrims.length === 0) { pilgrimListElement.innerHTML = '<li>لا يوجد حجاج لعرضهم.</li>'; return; }
+
+            pilgrims.forEach((pilgrim) => {
+                try {
+                    // Sidebar List Item
+                    const li = document.createElement('li');
+                    li.dataset.pilgrimId = pilgrim.id;
+                    let zoneClassList = 'zone-unknown';
+                    if (pilgrim.zone === 'خضراء') zoneClassList = 'zone-green';
+                    else if (pilgrim.zone === 'برتقالية') zoneClassList = 'zone-orange';
+                    else if (pilgrim.zone === 'حمراء') zoneClassList = 'zone-red';
+                    li.classList.add(zoneClassList);
+
+                    const img = document.createElement('img');
+                    img.src = pilgrim.photoUrl || placeholderSvg; img.alt = `صورة ${pilgrim.name || 'حاج'}`; img.onerror = function() { imgError(this); };
+                    const nameSpan = document.createElement('span');
+                    const displayName = pilgrim.name || `حاج ${pilgrim.id}`;
+                    nameSpan.textContent = (pilgrim.isEmergency === true) ? `${EMERGENCY_EMOJI} ${displayName}` : displayName;
+
+                    li.appendChild(nameSpan); li.appendChild(img);
+                    li.addEventListener('click', () => {
+                        handlePilgrimSelect(pilgrim.id);
+                        document.querySelectorAll('#pilgrim-list li').forEach(item => item.classList.remove('selected'));
+                        li.classList.add('selected');
+                    });
+                    pilgrimListElement.appendChild(li);
+
+                    // Map Marker
+                    if (!pilgrim.coordinates || !Array.isArray(pilgrim.coordinates) || pilgrim.coordinates.length !== 2) {
+                        console.warn(`Invalid coordinates for pilgrim ${pilgrim.id}. Skipping marker.`); return; // Use return instead of continue in forEach
+                    }
+                    const markerEl = document.createElement('div');
+                    markerEl.className = 'pilgrim-marker';
+                    let zoneClassMarker = 'marker-zone-unknown';
+                    if (pilgrim.zone === 'خضراء') zoneClassMarker = 'marker-zone-green';
+                    else if (pilgrim.zone === 'برتقالية') zoneClassMarker = 'marker-zone-orange';
+                    else if (pilgrim.zone === 'حمراء') zoneClassMarker = 'marker-zone-red';
+                    markerEl.classList.add(zoneClassMarker);
+
+                    const emojiSpan = document.createElement('span');
+                    if (pilgrim.isEmergency === true) { emojiSpan.textContent = EMERGENCY_EMOJI; markerEl.classList.add('marker-emergency'); }
+                    markerEl.appendChild(emojiSpan);
+
+                    try {
+                        const marker = new mapboxgl.Marker(markerEl).setLngLat(pilgrim.coordinates).addTo(map);
+                        markerEl.addEventListener('click', (e) => {
+                            e.stopPropagation(); handlePilgrimSelect(pilgrim.id);
+                            document.querySelectorAll('#pilgrim-list li').forEach(item => item.classList.remove('selected'));
+                            const listItem = document.querySelector(`#pilgrim-list li[data-pilgrim-id='${pilgrim.id}']`);
+                            if (listItem) listItem.classList.add('selected');
+                        });
+                        markers[pilgrim.id] = marker;
+                    } catch (markerError) { console.error(`Error adding Mapbox marker for ${pilgrim.id}:`, markerError); }
+                } catch (loopError) { console.error(`Error processing pilgrim ${pilgrim ? pilgrim.id : 'UNKNOWN'} in loop:`, loopError); }
+            });
+        } // End populateSidebarAndMarkers
+
+        function handlePilgrimSelect(pilgrimId) {
+            const selectedPilgrim = pilgrims.find(p => p.id === pilgrimId);
+            if (!selectedPilgrim) { console.error(`Pilgrim with ID ${pilgrimId} not found.`); infoPanelElement.innerHTML = '<p style="text-align: center; color: red;">لم يتم العثور على الحاج المحدد.</p>'; infoPanelElement.classList.add('visible'); return; }
+            if (selectedPilgrim.coordinates && map) { map.flyTo({ center: selectedPilgrim.coordinates, zoom: MAP_FLY_TO_ZOOM, pitch: MAP_PITCH, bearing: map.getBearing(), essential: true }); }
+            updateInfoPanel(selectedPilgrim); // Update panel with selected pilgrim's full details
+            document.querySelectorAll('#pilgrim-list li').forEach(item => item.classList.remove('selected'));
+            const listItem = document.querySelector(`#pilgrim-list li[data-pilgrim-id='${pilgrim.id}']`);
+            if (listItem) listItem.classList.add('selected');
+        }
+
+        // --- Updated Info Panel Function with Split ---
+        function updateInfoPanel(pilgrim) {
+            if (!pilgrim) { infoPanelElement.innerHTML = '<p style="text-align: center; color: #666;">اختر حاجاً لعرض التفاصيل.</p>'; infoPanelElement.classList.remove('visible'); return; }
+            let zoneClass = 'zone-label-unknown'; if (pilgrim.zone === 'خضراء') zoneClass = 'zone-label-green'; else if (pilgrim.zone === 'برتقالية') zoneClass = 'zone-label-orange'; else if (pilgrim.zone === 'حمراء') zoneClass = 'zone-label-red';
+
+            // --- Clickable Location Link ---
+            let locationHtml = 'غير متوفر';
+            if (pilgrim.coordinates && pilgrim.coordinates.length === 2) {
+                 const coordsText = `${pilgrim.coordinates[1].toFixed(5)}, ${pilgrim.coordinates[0].toFixed(5)}`;
+                 const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${pilgrim.coordinates[1]},${pilgrim.coordinates[0]}`;
+                 locationHtml = `<a href="${mapsUrl}" target="_blank" rel="noopener noreferrer" class="location-link">${coordsText}</a>`;
+            }
+
+            infoPanelElement.innerHTML = `
+                <div id="info-panel-content">
+                    <div id="info-panel-img-container">
+                        <img id="info-panel-img" src="${pilgrim.photoUrl || placeholderSvg}" alt="صورة ${pilgrim.name || 'الحاج'}" onerror="imgError(this);">
+                        <span id="info-panel-name">${pilgrim.name || 'اسم غير متوفر'}</span>
+                         <button id="emergency-button" class="info-panel-button" data-pilgrim-id="${pilgrim.id}" data-pilgrim-name="${pilgrim.name || 'الحاج المحدد'}">نداء طوارئ</button>
+                    </div>
+                    <div id="info-panel-all-details">
+                         <div id="info-panel-basic-details">
+                            <p><strong>المعرف:</strong> ${pilgrim.id || '---'}</p>
+                            <p><strong>المنطقة:</strong> <span class="zone-label ${zoneClass}">${pilgrim.zone || 'غير معروف'}</span></p>
+                            <p><strong>حالة التصريح:</strong> ${pilgrim.permitStatus || '---'}</p>
+                            <p><strong>الجنسية:</strong> ${pilgrim.nationality || '---'}</p>
+                            <p><strong>العمر:</strong> ${pilgrim.age || '---'}</p>
+                            <p><strong>الجنس:</strong> ${pilgrim.gender || '---'}</p>
+                            <p><strong>رقم الجوال:</strong> ${pilgrim.phoneNumber || '---'}</p>
+                            <p><strong>الحالة الصحية:</strong> ${pilgrim.medicalHistory || '---'}</p>
+                            <p><strong>الموقع الحالي:</strong> ${locationHtml}</p>
+                        </div>
+
+                        <div id="toggle-info-button-container">
+                             <button id="toggle-info-button" class="info-panel-button">المزيد من المعلومات</button>
+                        </div>
+
+                        <div id="info-panel-additional-details" style="display: none;">
+                            <p><strong>رقم الجواز:</strong> ${pilgrim.passportNumber || '---'}</p>
+                            <p><strong>رقم الهوية/الإقامة:</strong> ${pilgrim.nationalId || '---'}</p>
+                            <p><strong>تاريخ انتهاء الجواز:</strong> ${pilgrim.passportExpiry || '---'}</p>
+                            <p><strong>رقم التصريح:</strong> ${pilgrim.permitNumber || '---'}</p>
+                            <p><strong>اسم الفندق:</strong> ${pilgrim.hotelName || '---'}</p>
+                            <p><strong>اسم الحملة:</strong> ${pilgrim.campaignName || '---'}</p>
+                            <p><strong>رقم جوال للطوارئ:</strong> ${pilgrim.emergencyPhoneNumber || '---'}</p>
+                            <p><strong>السجل الجنائي:</strong> ${pilgrim.criminalRecord || '---'}</p>
+                            <p><strong>جهة القدوم:</strong> ${pilgrim.arrivalPoint || '---'}</p>
+                            <p><strong>تاريخ الوصول:</strong> ${pilgrim.arrivalDate || '---'}</p>
+                            <p><strong>تاريخ المغادرة:</strong> ${pilgrim.departureDate || '---'}</p>
+                        </div>
+                    </div>
+                </div>`;
+
+            infoPanelElement.classList.add('visible');
+            infoPanelElement.classList.remove('expanded'); // Reset expanded state
+
+            // Attach event listeners for buttons inside the panel
+            const emergencyButton = document.getElementById('emergency-button');
+            if (emergencyButton) { emergencyButton.removeEventListener('click', handleEmergencyClick); emergencyButton.addEventListener('click', handleEmergencyClick); } else { console.error("Emergency button not found."); }
+
+            const toggleInfoButton = document.getElementById('toggle-info-button');
+            const additionalDetails = document.getElementById('info-panel-additional-details');
+            if (toggleInfoButton && additionalDetails) {
+                toggleInfoButton.onclick = () => {
+                    const isHidden = additionalDetails.style.display === 'none';
+                    additionalDetails.style.display = isHidden ? 'grid' : 'none'; // Use grid for layout consistency
+                    toggleInfoButton.textContent = isHidden ? 'إخفاء المعلومات الإضافية' : 'المزيد من المعلومات';
+                    // Optionally expand the panel height when showing more info
+                     infoPanelElement.classList.toggle('expanded', isHidden);
+                };
+            } else { console.error("Toggle button or additional details div not found."); }
+        } // End updateInfoPanel
+
+        function handleEmergencyClick(event) {
+            const button = event.target; const pilgrimId = button.dataset.pilgrimId; const pilgrimName = button.dataset.pilgrimName;
+            const selectedPilgrim = pilgrims.find(p => p.id === pilgrimId); if (!selectedPilgrim) { console.error("Pilgrim not found:", pilgrimId); return; }
+            if (selectedPilgrim.isEmergency) { showCustomAlert(`${pilgrimName} مسجل كحالة طوارئ بالفعل.`); return; }
+
+            // Use standard confirm for the question
+            if (window.confirm(`هل أنت متأكد من إرسال نداء طوارئ للحاج ${pilgrimName} (المعرف: ${pilgrimId})؟`)) {
+                console.log(`ACTION: Emergency confirmed for ${pilgrimName} (ID: ${pilgrimId}).`);
+                // Show custom alert for success
+                showCustomAlert(`تم ترحيل البلاغ للهلال الأحمر للحاج ${pilgrimName}.`);
+                selectedPilgrim.isEmergency = true;
+                populateSidebarAndMarkers(); handlePilgrimSelect(pilgrimId); // Update visuals
+            } else { console.log(`Emergency call cancelled for ${pilgrimName}.`); }
+         }
+
+        function drawPilgrimZones() { /* ... (Function remains the same) ... */
+            const zoneSource = map.getSource('zone-polygons-source'); if (!zoneSource) return;
+            const zoneFeatures = []; const options = { steps: 64, units: 'kilometers' };
+            try { const makkahExtentCircle = turf.circle(MAKKAH_CENTER_COORDS, MAKKAH_VISUAL_EXTENT_KM, { ...options, properties: { zoneType: 'makkah_extent' } }); zoneFeatures.push(makkahExtentCircle); } catch(e) { /* ignore */ }
+            try { const greenZoneCircle = turf.circle(MAKKAH_CENTER_COORDS, ORANGE_ZONE_THRESHOLD_KM, { ...options, properties: { zoneType: 'green' } }); zoneFeatures.push(greenZoneCircle); } catch(e) { /* ignore */ }
+            const redZoneCenters = [MINA_COORDS, ARAFAT_COORDS, MUZDALIFAH_COORDS];
+            redZoneCenters.forEach((center) => { try { const redZoneCircle = turf.circle(center, RED_ZONE_RADIUS_KM, { ...options, properties: { zoneType: 'red' } }); zoneFeatures.push(redZoneCircle); } catch(e) { /* ignore */ } });
+            try { zoneSource.setData({ type: 'FeatureCollection', features: zoneFeatures }); } catch(e) { console.error("Error setting zone source data:", e) }
+        } // End drawPilgrimZones
+
+         function addCrowdWarningMarker() { /* ... (Function remains the same) ... */
+             const el = document.createElement('div'); el.className = 'crowd-warning-marker'; el.innerHTML = `<span>${CROWD_WARNING_EMOJI}</span>`;
+             const popup = new mapboxgl.Popup({ offset: 25, closeButton: false }).setText('كثافة حجاج عالية في هذه المنطقة. خطر محتمل للتدافع.');
+             try { new mapboxgl.Marker(el).setLngLat(CLUSTER_CENTER_COORDS).setPopup(popup).addTo(map); }
+             catch (error) { console.error("Error adding crowd warning marker:", error); }
+         } // End addCrowdWarningMarker
+
+        // --- Custom Alert Functions ---
+        function showCustomAlert(message) {
+            if (!customAlertOverlay || !customAlertMessage) {
+                console.error("Custom alert elements not found!");
+                alert(message); // Fallback to standard alert
+                return;
+            }
+            customAlertMessage.textContent = message;
+            customAlertOverlay.style.display = 'flex'; // Show the overlay
+        }
+
+        function hideCustomAlert() {
+            if (customAlertOverlay) {
+                customAlertOverlay.style.display = 'none'; // Hide the overlay
+            }
+        }
+
+        // Add event listener for the custom alert close button
+        if (customAlertCloseButton) {
+             customAlertCloseButton.addEventListener('click', hideCustomAlert);
+        }
+         // Optional: Close alert if clicking outside the box
+         if (customAlertOverlay) {
+            customAlertOverlay.addEventListener('click', (event) => {
+                if (event.target === customAlertOverlay) { // Check if click is on the overlay itself
+                    hideCustomAlert();
+                }
+            });
+         }
+
+        // Initial actions if needed when DOM is ready
+        document.addEventListener('DOMContentLoaded', () => {
+             // Any setup that needs the DOM can go here
+             // Map initialization is handled by Mapbox load event
+        });
+
+    </script>
+</body>
+</html>
